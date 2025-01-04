@@ -1,36 +1,53 @@
-# This is a basic workflow to help you get started with Actions
+name: Test github secrets with postgres and github actions
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: get the secrets to env file
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          echo "POSTGRES_USER=${{secrets.DB_USER}}" >> .env
+          echo "POSTGRES_PASSWORD=${{secrets.DB_PASSWORD}}" >> .env
+
+      - name: Show the env file
+        run: cat .env
+
+      - name: Set up Docker container for PostgreSQL
+        run: |
+          docker pull postgres:17-alpine
+          docker run -d \
+            --name test-postgres \
+            -e POSTGRES_USER=${{secrets.DB_USER || 'postgres'}} \
+            -e POSTGRES_PASSWORD=${{secrets.DB_PASSWORD || '123456'}} \
+            -v ${{ github.workspace }}/init.sql:/docker-entrypoint-initdb.d/init.sql:ro \
+            -p 5432:5432 \
+            postgres:17-alpine
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          # Wait for PostgreSQL to be ready
+          for i in {1..10}; do
+            if docker exec test-postgres pg_isready -U postgres > /dev/null 2>&1; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL to be ready... ($i/30)"
+            sleep 2
+          done
+
+      - name: Database logs
+        if: always()
+        run: docker logs test-postgres
+
+      - name: Database container inspection
+        if: always()
+        run: docker inspect test-postgres
